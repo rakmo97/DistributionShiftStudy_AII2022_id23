@@ -1,0 +1,250 @@
+
+#%% ============================================================================
+# Import Dependencies
+# ============================================================================
+
+
+import pickle
+from scipy.io import loadmat
+from scipy.io import savemat
+from KNNregressor import KNNReg
+import numpy as np
+from scipy import integrate
+import LanderDynamics as LD
+import time
+from matplotlib import pyplot as plt
+
+
+#%% ============================================================================
+# Load Trajectories
+# ===========================================================================
+print("Loading mat file")
+# base_data_folder = 'E:/Research_Data/3DoF_RigidBody/'
+base_data_folder = '/orange/rcstudents/omkarmulekar/DistributionShiftStudy/'
+formulation = 'coupled_6dof/'
+matfile = loadmat(base_data_folder+formulation+'ANN2_data.mat')
+# matfile = loadmat('ANN2_decoupled_data.mat')
+
+#%% ============================================================================
+# Load Policy
+# ============================================================================
+print('Loading Policy')
+# filename = 'BC_k2_w_end.pkl'
+filename = 'BC_k2.pkl'
+with open(filename,'rb') as f:
+    pickle_in = pickle.load(f)
+    
+knn_interp = pickle_in[0]
+
+nState    =   knn_interp.xData.shape[1]
+nCtrl     =   knn_interp.yData.shape[1]
+
+
+
+
+
+# Trajectory settings
+trajToRun = 1
+starting_idx = trajToRun*100
+x_ocl = matfile['Xtest2'].reshape(-1,nState)[starting_idx:starting_idx+100,:]
+u_ocl = matfile['ttest2'][starting_idx:starting_idx+100,:]
+times_ocl = matfile['times_test'][starting_idx:starting_idx+100,:]
+
+# Time settings
+t0 = 0
+tf = times_ocl[-1]
+nt = 200
+times = np.linspace(t0,tf,nt)
+
+x0 = knn_interp.x_test_data[starting_idx,:]
+# x0 = np.array([ -1200,  1000, -8.93259019e-02,  8.12677630e+00, -5.63516203e-03, -1.17370117e-01])
+
+y_policy = np.zeros([nt,nCtrl])
+x_policy = np.zeros([nt,nState])
+x_policy[0,:] = x0
+
+tic = time.perf_counter()
+print('Running Sim')
+for i in range(nt-1):
+    
+    
+    y_policy[i,:] = knn_interp.predict(x_policy[i,:])
+
+    print("==============================================")
+    print('Predicted Control {} of {}'.format(i,nt))
+    
+    sol = integrate.solve_ivp(fun=lambda t, y: LD.LanderEOM_KNN(t,y,y_policy[i,:]),\
+                                    t_span=(times[i],times[i+1]), \
+                                    y0=x_policy[i,:]) # Default method: rk45
+
+    print('Simulated step {} of {}'.format(i,nt))
+
+
+    xsol = sol.y
+    tsol = sol.t
+                
+    
+    x_policy[i+1,:] = xsol[:,xsol.shape[1]-1]
+    # x_policy[i+1,:] = x_ocl[i+1,:]
+
+runtime = time.perf_counter() - tic
+
+print('Average prediction time: {} s'.format(runtime/nt))
+
+# ============================================================================
+# Plotting
+# ============================================================================
+
+plt.figure()
+ax = plt.axes(projection='3d')
+ax.plot3D(x_policy[:,0],x_policy[:,1],x_policy[:,2])
+ax.plot(x_ocl[:,0],x_ocl[:,1],x_ocl[:,2],'--')
+ax.set_xlabel('X [m]')
+ax.set_ylabel('Y [m]')
+ax.set_zlabel('Z [m]')
+ax.legend(['Policy','Optimal'])
+plt.savefig('knn_traj.png')
+
+
+plt.figure()
+plt.subplot(221)
+plt.plot(times,x_policy[:,0])
+plt.plot(times_ocl,x_ocl[:,0],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('X [m]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(222)
+plt.plot(times,x_policy[:,1])
+plt.plot(times_ocl,x_ocl[:,1],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Y [m]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(223)
+plt.plot(times,x_policy[:,2])
+plt.plot(times_ocl,x_ocl[:,2],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Z [m]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(224)
+plt.plot(times,x_policy[:,12])
+plt.plot(times_ocl,x_ocl[:,12],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('m [kg]')
+plt.legend(['Policy','Optimal'])
+plt.tight_layout()
+plt.savefig('knn_pos.png')
+
+
+
+
+plt.figure()
+plt.subplot(221)
+plt.plot(times,x_policy[:,3])
+plt.plot(times_ocl,x_ocl[:,3],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Xdot [m/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(222)
+plt.plot(times,x_policy[:,4])
+plt.plot(times_ocl,x_ocl[:,4],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Ydot [m/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(223)
+plt.plot(times,x_policy[:,5]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,5]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Zdot [m/s]')
+plt.legend(['Policy','Optimal'])
+plt.tight_layout()
+plt.savefig('knn_vel.png')
+
+
+
+plt.figure()
+plt.subplot(221)
+plt.plot(times,x_policy[:,6]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,6]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Phi [deg]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(222)
+plt.plot(times,x_policy[:,7]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,7]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Theta [deg]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(223)
+plt.plot(times,x_policy[:,8]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,8]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('Psi [deg]')
+plt.legend(['Policy','Optimal'])
+plt.tight_layout()
+plt.savefig('knn_eulerangles.png')
+
+
+
+plt.figure()
+plt.subplot(221)
+plt.plot(times,x_policy[:,9]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,9]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('p [deg/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(222)
+plt.plot(times,x_policy[:,10]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,10]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('q [deg/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(223)
+plt.plot(times,x_policy[:,11]*180.0/np.pi)
+plt.plot(times_ocl,x_ocl[:,11]*180.0/np.pi,'--')
+plt.xlabel('Time [s]')
+plt.ylabel('r [deg/s]')
+plt.legend(['Policy','Optimal'])
+plt.tight_layout()
+plt.savefig('knn_angvel.png')
+
+
+
+plt.figure()
+plt.subplot(221)
+plt.plot(times,y_policy[:,0])
+plt.plot(times_ocl,u_ocl[:,0],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('u1 [N]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(222)
+plt.plot(times,y_policy[:,1])
+plt.plot(times_ocl,u_ocl[:,1],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('u2 [rad/s/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(223)
+plt.plot(times,y_policy[:,2])
+plt.plot(times_ocl,u_ocl[:,2],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('u3 [rad/s/s]')
+plt.legend(['Policy','Optimal'])
+
+plt.subplot(224)
+plt.plot(times,y_policy[:,3])
+plt.plot(times_ocl,u_ocl[:,3],'--')
+plt.xlabel('Time [s]')
+plt.ylabel('u4 [rad/s/s]')
+plt.legend(['Policy','Optimal'])
+plt.tight_layout()
+plt.savefig('knn_ctrls.png')
